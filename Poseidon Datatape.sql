@@ -235,6 +235,7 @@ base AS (
         abs.battery_data_error_flag, abs.billing_method, abs."% of Contracted Gen Guaranteed",
         v.*,
         psd.agreement_number AS psd_agreement_number,
+        psd.te_fund AS psd_te_fund,
 
         -- Fields not on the ABS data tape (from PSD)
         IFF(psd.sc_brightbox_flag, 1, 0) AS sc_brightbox_flag,                              -- C: TRUE = 1, FALSE / blank = 0
@@ -385,7 +386,10 @@ SELECT
     b.county                                             AS "Customer Address",                         -- F  psd (input tab holds county here)
     b.address                                            AS "Zip Code",                                 -- G  psd (input tab holds full address here)
     b.utility_clean                                      AS "Utility Company",                          -- H
-    b.te_fund                                            AS "TE Fund Name",                             -- I
+    -- Jupiter Owner 2022 is split by PTO vintage (matches the "Jupiter TE Fund Fixes" tab: 2,535 / 3,745)
+    CASE WHEN b.psd_te_fund = 'Jupiter Owner 2022'
+         THEN 'Jupiter Owner 2022 ' || IFF(YEAR(b.pto_date) <= 2013, '[2012 - 2013]', '[2014 - 2017]')
+         ELSE b.psd_te_fund END                          AS "TE Fund Name",                             -- I
     b.asset_sale_date                                    AS "In TE Fund",                               -- J  psd
     b.pbi_level                                          AS "PBI Rate $/kWh",                           -- K
     b.pbi_term                                           AS "PBI Term",                                 -- L
