@@ -156,13 +156,18 @@ def."Defaulted: Three Prong Default Test",
     IFF(psd.state = 'MA', 1, 0) as "MA PBI Flag",
     IFF(psd.state = 'NJ', 1, 0) as "NJ PBI Flag",
 
+--Latest FICO: FICO_LATEST_SERVICE_TRANSFER_SCORE is the current customer's score (equals the original
+-- score when there has been no service transfer). Stored as VARCHAR, so TRY_TO_NUMBER turns text such as
+-- 'Not Available' into NULL; fall back to the original score only when the latest is missing.
+    COALESCE(TRY_TO_NUMBER(psd.FICO_LATEST_SERVICE_TRANSFER_SCORE), TRY_TO_NUMBER(psd.fico_original_score)) as "Latest FICO",
+
 --Eligibility triggers (model DZ:EE). 1 = trigger hit.
 -- 120+ DPD counts every bucket past 120 days, 361+ included (361+ balances are not treated as resolved).
     "120+ Days Past Due (1=Yes)" as "120+ dpd (Holdco only)",
     IFF("120+ Days Past Due (1=Yes)" = 1
-        AND psd.FICO_LATEST_SERVICE_TRANSFER_SCORE >= v.fico_floor, 1, 0) as "120+ dpd (361+ not resolved) and FICO >= 650 (Senior only)",
+        AND "Latest FICO" >= v.fico_floor, 1, 0) as "120+ dpd (361+ not resolved) and FICO >= 650 (Senior only)",
     IFF("60+ Days Past Due (1=Yes)" = 1
-        AND (psd.FICO_LATEST_SERVICE_TRANSFER_SCORE IS NULL OR psd.FICO_LATEST_SERVICE_TRANSFER_SCORE < v.fico_floor), 1, 0) as "60+ dpd and No FICO or FICO < 650 (Senior only)",
+        AND ("Latest FICO" IS NULL OR "Latest FICO" < v.fico_floor), 1, 0) as "60+ dpd and No FICO or FICO < 650 (Senior only)",
     "Ineligible Asset Status"::int as "Ineligible Asset Status (Trigger)",
     IFF(UPPER(TO_VARCHAR(def."Deactivation Default Flag")) IN ('1','Y','YES','TRUE'), 1, 0) as "Deactivated",
     IFF("120+ dpd (361+ not resolved) and FICO >= 650 (Senior only)" + "60+ dpd and No FICO or FICO < 650 (Senior only)"
@@ -177,7 +182,7 @@ def."Defaulted: Three Prong Default Test",
         IFF("120+ dpd (Holdco only)" = 1, 'Holdco: 120+ DPD', NULL),
         IFF("120+ dpd (361+ not resolved) and FICO >= 650 (Senior only)" = 1, 'Senior: 120+ DPD, FICO >= 650', NULL),
         IFF("60+ dpd and No FICO or FICO < 650 (Senior only)" = 1,
-            IFF(psd.FICO_LATEST_SERVICE_TRANSFER_SCORE IS NULL, 'Senior: 60+ DPD, no FICO', 'Senior: 60+ DPD, FICO < 650'), NULL)
+            IFF("Latest FICO" IS NULL, 'Senior: 60+ DPD, no FICO', 'Senior: 60+ DPD, FICO < 650'), NULL)
     ), '; ') as "Ineligible Reason"
 
 
