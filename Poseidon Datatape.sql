@@ -3,7 +3,7 @@ WITH params AS (
     SELECT
         '2023-12-31'::date AS cutoff_date,      -- as-of date for "Months Since PTO" (reproduces the current model)
         0                  AS dpd_min_balance,  -- a DPD bucket counts as past due only above this balance ($)
-        600                AS fico_floor        -- "60+ dpd and No FICO or FICO < X" threshold - confirm against model
+        650                AS fico_floor        -- Senior FICO triggers: 120+ dpd and FICO >= 650 / 60+ dpd and no FICO or FICO < 650
 )
 
 SELECT
@@ -157,23 +157,27 @@ def."Defaulted: Three Prong Default Test",
     IFF(psd.state = 'NJ', 1, 0) as "NJ PBI Flag",
 
 --Eligibility triggers (model DZ:EE). 1 = trigger hit.
+-- 120+ DPD counts every bucket past 120 days, 361+ included (361+ balances are not treated as resolved).
     "120+ Days Past Due (1=Yes)" as "120+ dpd (Holdco only)",
-    IFF(COALESCE(ar."361+ Days Past Due",0) > v.dpd_min_balance, 1, 0) as "120+ dpd (361+ not resolved)",
+    IFF("120+ Days Past Due (1=Yes)" = 1
+        AND psd.FICO_LATEST_SERVICE_TRANSFER_SCORE >= v.fico_floor, 1, 0) as "120+ dpd (361+ not resolved) and FICO >= 650 (Senior only)",
     IFF("60+ Days Past Due (1=Yes)" = 1
-        AND (psd.FICO_LATEST_SERVICE_TRANSFER_SCORE IS NULL OR psd.FICO_LATEST_SERVICE_TRANSFER_SCORE < v.fico_floor), 1, 0) as "60+ dpd and No FICO or FICO < Floor",
+        AND (psd.FICO_LATEST_SERVICE_TRANSFER_SCORE IS NULL OR psd.FICO_LATEST_SERVICE_TRANSFER_SCORE < v.fico_floor), 1, 0) as "60+ dpd and No FICO or FICO < 650 (Senior only)",
     "Ineligible Asset Status"::int as "Ineligible Asset Status (Trigger)",
     IFF(UPPER(TO_VARCHAR(def."Deactivation Default Flag")) IN ('1','Y','YES','TRUE'), 1, 0) as "Deactivated",
-    IFF("120+ dpd (Holdco only)" + "120+ dpd (361+ not resolved)" + "60+ dpd and No FICO or FICO < Floor"
-        + "Ineligible Asset Status (Trigger)" + "Deactivated" = 0, 1, 0) as "Current PMT Date Eligible",
+    IFF("120+ dpd (361+ not resolved) and FICO >= 650 (Senior only)" + "60+ dpd and No FICO or FICO < 650 (Senior only)"
+        + "Ineligible Asset Status (Trigger)" + "Deactivated" = 0, 1, 0) as "Current PMT Date Eligible (Senior)",
+    IFF("120+ dpd (Holdco only)"
+        + "Ineligible Asset Status (Trigger)" + "Deactivated" = 0, 1, 0) as "Current PMT Date Eligible (Holdco)",
 
 -- Which trigger(s) made the asset ineligible - for reconciling ineligible counts.
     ARRAY_TO_STRING(ARRAY_CONSTRUCT_COMPACT(
         IFF("Ineligible Asset Status (Trigger)" = 1, 'Asset Status: ' || psd.asset_status, NULL),
-        IFF("120+ dpd (Holdco only)" = 1, '120+ DPD', NULL),
-        IFF("120+ dpd (361+ not resolved)" = 1, '361+ DPD', NULL),
-        IFF("60+ dpd and No FICO or FICO < Floor" = 1,
-            IFF(psd.FICO_LATEST_SERVICE_TRANSFER_SCORE IS NULL, '60+ DPD, no FICO', '60+ DPD, FICO < floor'), NULL),
-        IFF("Deactivated" = 1, 'Deactivated', NULL)
+        IFF("Deactivated" = 1, 'Deactivated', NULL),
+        IFF("120+ dpd (Holdco only)" = 1, 'Holdco: 120+ DPD', NULL),
+        IFF("120+ dpd (361+ not resolved) and FICO >= 650 (Senior only)" = 1, 'Senior: 120+ DPD, FICO >= 650', NULL),
+        IFF("60+ dpd and No FICO or FICO < 650 (Senior only)" = 1,
+            IFF(psd.FICO_LATEST_SERVICE_TRANSFER_SCORE IS NULL, 'Senior: 60+ DPD, no FICO', 'Senior: 60+ DPD, FICO < 650'), NULL)
     ), '; ') as "Ineligible Reason"
 
 
