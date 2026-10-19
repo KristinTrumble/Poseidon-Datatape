@@ -190,7 +190,7 @@ SELECT
     b.qtr_st_flag                                        AS "Current QTR ST (to be built out in future)", -- AZ psd
     NULL                                                 AS "Transunion FICO pulls",                    -- BA (team populates)
     b.fico_latest_service_transfer_score                 AS "Current FICO SNF Model",                   -- BB
-    NULL                                                 AS "7.30.2026 DT FICO",                        -- BC (team populates)
+    NULL                                                 AS "Prior Quarter DT FICO",                        -- BC (team populates)
     b.fico                                               AS "FICO",                                     -- BD
     CASE WHEN b.pto_date IS NOT NULL THEN 'PTO'
          WHEN b."Install Date" IS NOT NULL THEN 'Install'
@@ -291,13 +291,13 @@ SELECT
     NULL                                                 AS "PA Consulting Escalator * Contracted Years Remaining", -- DW (needs DS)
     NULL                                                 AS "Auto Renewal Annual Payment",              -- DX (needs DU)
     NULL                                                 AS "x",                                        -- DY
-    NULL                                                 AS "7/31/2026 PMT Date Eligible Projects (1=Eligible, 0=Ineligible)", -- DZ (team populates)
+    NULL                                                 AS "Prior Quarter PMT Date Eligible Projects (1=Eligible, 0=Ineligible)", -- DZ (team populates)
     b.trig_120_holdco                                    AS "120+ dpd (Holdco only)",                   -- EA
     b.trig_120_senior                                    AS "120+ dpd (361+ not resolved) and FICO =>650 (Senior only)", -- EB
     b.trig_60_senior                                     AS "60+ dpd and No FICO or FICO <650 (Senior only)", -- EC
     b.ineligible_asset_status                            AS "Ineligible Asset Status",                  -- ED
     b.trig_deactivated                                   AS "Deactivated",                              -- EE
-    NULL                                                 AS "10/30/2026 PMT Date Eligible Projects (1=Eligible, 0=Ineligible)", -- EF (team calculates: depends on prior eligibility in DZ)
+    NULL                                                 AS "Current Quarter PMT Date Eligible Projects (1=Eligible, 0=Ineligible)", -- EF (team calculates: depends on prior eligibility in DZ)
 
     -- Diagnostics (right of EF, outside the model range)
     ARRAY_TO_STRING(ARRAY_CONSTRUCT_COMPACT(
