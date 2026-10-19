@@ -55,6 +55,9 @@ base AS (
         def."Aging Default Flag",
         ar.agreement_number AS ar_agreement_number,
         ar."ABS Aging Bucket",
+        ar."Current Balance", ar."1-30 Days Past Due", ar."31-60 Days Past Due", ar."61-90 Days Past Due",
+        ar."91-120 Days Past Due", ar."121-180 Days Past Due", ar."181-360 Days Past Due", ar."361+ Days Past Due",
+        ar."Outstanding Balance",
         pegu.pegu_payout_frequency,
 
         abs.agreement_term_years AS term_years,                                                       -- CD
@@ -299,7 +302,21 @@ SELECT
     b.trig_deactivated                                   AS "Deactivated",                              -- EE
     NULL                                                 AS "Current Quarter PMT Date Eligible Projects (1=Eligible, 0=Ineligible)", -- EF (team calculates: depends on prior eligibility in DZ)
 
-    -- Diagnostics (right of EF, outside the model range)
+    -- Aging data (right of EF, outside the model range) to check against the DPD flags and triggers
+    b."Current Balance"                                  AS "Current Balance",
+    b."1-30 Days Past Due"                               AS "1-30 Days Past Due",
+    b."31-60 Days Past Due"                              AS "31-60 Days Past Due",
+    b."61-90 Days Past Due"                              AS "61-90 Days Past Due",
+    b."91-120 Days Past Due"                             AS "91-120 Days Past Due",
+    b."121-180 Days Past Due"                            AS "121-180 Days Past Due",
+    b."181-360 Days Past Due"                            AS "181-360 Days Past Due",
+    b."361+ Days Past Due"                               AS "361+ Days Past Due",
+    b."Outstanding Balance"                              AS "Outstanding Balance",
+    NULL                                                 AS "x",
+    b."ABS Aging Bucket"                                 AS "ABS Aging Bucket",
+    NULL                                                 AS "x",
+
+    -- Diagnostics
     ARRAY_TO_STRING(ARRAY_CONSTRUCT_COMPACT(
         IFF(b.ineligible_asset_status = 1, 'Asset Status: ' || b.asset_status, NULL),
         IFF(b.trig_deactivated = 1, 'Deactivated', NULL),
@@ -309,7 +326,6 @@ SELECT
         IFF(b.trig_120_holdco = 1, 'Holdco: 120+ DPD', NULL)
     ), '; ')                                             AS "Ineligible Reason",
     b.prior_list_ineligible_status                       AS "Ineligible Asset Status (prior hardcoded list)",
-    b."ABS Aging Bucket"                                 AS "ABS Aging Bucket",
     b."Termporary Removal Check"                         AS "ABS Temporary Removal Check",
     b."Terminated Solar Asset Flag (a.)"                 AS "ABS Terminated Solar Asset Flag (a.)",
     b.escalator_flag                                     AS "ABS Escalator Flag",
