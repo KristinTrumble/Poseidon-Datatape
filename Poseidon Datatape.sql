@@ -237,7 +237,7 @@ base AS (
         psd.agreement_number AS psd_agreement_number,
 
         -- Fields not on the ABS data tape (from PSD)
-        psd.sc_brightbox_flag,
+        IFF(psd.sc_brightbox_flag, 1, 0) AS sc_brightbox_flag,                              -- C: TRUE = 1, FALSE / blank = 0
         psd.county,
         psd.address,
         psd.asset_sale_date,
