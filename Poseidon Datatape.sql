@@ -297,9 +297,7 @@ SELECT
     b.trig_60_senior                                     AS "60+ dpd and No FICO or FICO <650 (Senior only)", -- EC
     b.ineligible_asset_status                            AS "Ineligible Asset Status",                  -- ED
     b.trig_deactivated                                   AS "Deactivated",                              -- EE
-    -- No current Senior trigger. Not re-eligible: final eligibility = MIN(DZ, EF) once DZ is populated.
-    IFF(b.trig_120_senior + b.trig_60_senior + b.ineligible_asset_status + b.trig_deactivated = 0, 1, 0)
-                                                         AS "10/30/2026 PMT Date Eligible Projects (1=Eligible, 0=Ineligible)", -- EF
+    NULL                                                 AS "10/30/2026 PMT Date Eligible Projects (1=Eligible, 0=Ineligible)", -- EF (team calculates: depends on prior eligibility in DZ)
 
     -- Diagnostics (right of EF, outside the model range)
     ARRAY_TO_STRING(ARRAY_CONSTRUCT_COMPACT(
