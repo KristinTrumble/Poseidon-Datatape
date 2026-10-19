@@ -9,7 +9,6 @@ WITH params AS (
         0.005              AS degradation,      -- DG2 annual production degradation
         '2017-12-31'::date AS ma_pbi_date,      -- DJ2
         '2020-04-30'::date AS nj_pbi_date,      -- DK2
-        0                  AS dpd_min_balance,  -- a DPD bucket counts as past due only above this balance ($)
         650                AS fico_floor        -- Senior FICO triggers (EB / EC)
 ),
 
@@ -26,7 +25,7 @@ base AS (
         abs."Months Since PTO at EOQ", abs."Contract Months Remaining", abs."First Payment Date",
         abs."Last Payment Date", abs."Termporary Removal Check", abs."Terminated Solar Asset Flag (a.)",
         abs.escalator_flag, abs."FLAG Implied $/kWh Rate", abs."FLAG Year 1 Monthly Payment",
-        abs.battery_data_error_flag,
+        abs.battery_data_error_flag, abs.billing_method, abs."% of Contracted Gen Guaranteed",
         v.*,
         psd.agreement_number AS psd_agreement_number,
 
@@ -41,14 +40,12 @@ base AS (
         psd.estimated_rebate_amount,
         psd.avoided_cost_of_power,
         psd.sr_signoff,
-        psd.billing_method,
         psd.billing_type,
         psd.pegu_s,
         psd.proposal_name,
         psd.sales_channel,
         psd.battery_capacity,
         psd.base_battery_payment,
-        psd.pg_threshold,
         COALESCE(psd.FICO_SERVICE_TRANSFER_FLAG::int, 0) AS st_flag,                        -- AY
         COALESCE(psd.previous_quarter_service_transfer_flag::int, 0) AS qtr_st_flag,        -- AZ
         CASE WHEN psd.asset_status IN ('Customer Purchased System','Force Majeure (Home Damaged)', 'Removed - Permanent', 'Force Majeure (System Damaged)','Asset Impaired- Removed Permanent', 'Asset Impaired Removed-Permanent', 'Asset Impaired Pending-Removal', 'Installed, No PTO- writeoff', 'Removed (Permanent)', 'Inactive', 'Equipment Stolen', 'Asset Impaired Pending-Removal-Billable', 'Offline', 'Bankruptcy','Damage Related Removed (Insurance claim and contract terminated)','Contract Terminated - Leave In Place') THEN 1 ELSE 0 END AS prior_list_ineligible_status,
@@ -57,6 +54,7 @@ base AS (
         def."Deactivation Default Flag",
         def."Aging Default Flag",
         ar.agreement_number AS ar_agreement_number,
+        ar."ABS Aging Bucket",
         pegu.pegu_payout_frequency,
 
         abs.agreement_term_years AS term_years,                                                       -- CD
@@ -65,22 +63,28 @@ base AS (
         CASE WHEN psd.billing_type = 'Fixed monthly PPA with annual reset' THEN 'Balanced' ELSE psd.billing_type END AS billing_type_based_on_proposal, -- BZ
         IFF(UPPER(TO_VARCHAR(abs."Ineligible Asset Status")) IN ('1','Y','YES','TRUE'), 1, 0) AS ineligible_asset_status, -- ED
 
-        -- Aging: buckets COALESCEd to 0 so an account with no aging-report row reads as current
-        (COALESCE(ar."31-60 Days Past Due",0) + COALESCE(ar."61-90 Days Past Due",0) + COALESCE(ar."91-120 Days Past Due",0)
-         + COALESCE(ar."121-180 Days Past Due",0) + COALESCE(ar."181-360 Days Past Due",0) + COALESCE(ar."361+ Days Past Due",0)) AS dpd_31_bal,
-        dpd_31_bal - COALESCE(ar."31-60 Days Past Due",0)  AS dpd_61_bal,
-        dpd_61_bal - COALESCE(ar."61-90 Days Past Due",0)  AS dpd_91_bal,
-        dpd_91_bal - COALESCE(ar."91-120 Days Past Due",0) AS dpd_121_bal,
-        IFF(COALESCE(ar."1-30 Days Past Due",0) > v.dpd_min_balance AND dpd_31_bal <= v.dpd_min_balance, 1, 0) AS dpd_1_30_flag,
-        IFF(dpd_31_bal  > v.dpd_min_balance, 1, 0) AS dpd_30_flag,
-        IFF(dpd_61_bal  > v.dpd_min_balance, 1, 0) AS dpd_60_flag,
-        IFF(dpd_91_bal  > v.dpd_min_balance, 1, 0) AS dpd_90_flag,
-        IFF(dpd_121_bal > v.dpd_min_balance, 1, 0) AS dpd_120_flag,
+        -- Aging: ABS aging bucket (abs_aging_report."ABS Aging Bucket"), as days past due lower bound.
+        -- No aging-report row = current.
+        CASE ar."ABS Aging Bucket"
+            WHEN 'Less than 30 DPD' THEN 1
+            WHEN '31-60 DPD'        THEN 31
+            WHEN '61-90 DPD'        THEN 61
+            WHEN '91-120 DPD'       THEN 91
+            WHEN '121-180 DPD'      THEN 121
+            WHEN '181-360 DPD'      THEN 181
+            WHEN '361+ DPD'         THEN 361
+            ELSE 0 END AS dpd,
+        IFF(dpd = 1,    1, 0) AS dpd_1_30_flag,
+        IFF(dpd >= 31,  1, 0) AS dpd_30_flag,
+        IFF(dpd >= 61,  1, 0) AS dpd_60_flag,
+        IFF(dpd >= 91,  1, 0) AS dpd_90_flag,
+        IFF(dpd >= 121, 1, 0) AS dpd_120_flag,
 
-        -- FICO (BD) = ABS "Adjusted FICO". Text values (e.g. 'Not Available', 'Prepaid', 'Multifamily')
-        -- become NULL via TRY_TO_NUMBER = "No FICO" for the Senior triggers.
+        -- FICO (BD) = ABS "Adjusted FICO". Category values ('Military Housing', 'New Home', 'Prepaid',
+        -- 'Multifamily') are not missing scores, so only blank / 'Not Available' / other text counts as "No FICO".
         abs."Adjusted FICO" AS fico,
         TRY_TO_NUMBER(fico) AS fico_num,
+        (fico_num IS NULL AND COALESCE(fico, '') NOT IN ('Military Housing', 'New Home', 'Prepaid', 'Multifamily')) AS no_fico,
 
         -- Contract detail
         abs."Implied $/kWh Rate" AS implied_rate,                                                     -- CV
@@ -92,10 +96,10 @@ base AS (
                   THEN (1 + abs.escalator) / (1 - v.degradation) - 1
              ELSE abs.escalator END AS implied_escalator,                                             -- DG
 
-        -- Eligibility triggers (1 = trigger hit). 120+ DPD counts every bucket past 120 days, 361+ included.
-        dpd_120_flag AS trig_120_holdco,                                                              -- EA
-        IFF(dpd_120_flag = 1 AND fico_num >= v.fico_floor, 1, 0) AS trig_120_senior,                  -- EB
-        IFF(dpd_60_flag = 1 AND (fico_num IS NULL OR fico_num < v.fico_floor), 1, 0) AS trig_60_senior, -- EC
+        -- Eligibility triggers (1 = trigger hit), from the ABS aging bucket.
+        dpd_120_flag AS trig_120_holdco,                                                              -- EA: 121+ DPD
+        IFF(dpd = 361 AND fico_num >= v.fico_floor, 1, 0) AS trig_120_senior,                         -- EB: 361+ bucket, FICO >= 650
+        IFF(dpd_60_flag = 1 AND (no_fico OR fico_num < v.fico_floor), 1, 0) AS trig_60_senior,        -- EC: 61+ DPD, no FICO or < 650
         IFF(UPPER(TO_VARCHAR(def."Deactivation Default Flag")) IN ('1','Y','YES','TRUE'), 1, 0) AS trig_deactivated -- EE
 
     -- PSD drives the row set so every Poseidon agreement appears even if the ABS tape is missing it
@@ -155,7 +159,7 @@ SELECT
     b.estimated_rebate_amount                            AS "Rebate",                                   -- W  psd
     b.avoided_cost_of_power                              AS "Year 1 Avoided Cost of Power",             -- X  psd
     b.sr_signoff                                         AS "SR Signoff",                               -- Y  psd
-    b.billing_method                                     AS "Billing Method",                           -- Z  psd
+    b.billing_method                                     AS "Billing Method",                           -- Z
     b.billing_type                                       AS "Billing Type",                             -- AA psd
     b.asset_status                                       AS "Asset Status",                             -- AB
     b.pegu_s                                             AS "Pegu Start Year",                          -- AC psd
@@ -192,7 +196,8 @@ SELECT
          WHEN b."Install Date" IS NOT NULL THEN 'Install'
          ELSE 'PreInstall' END                           AS "Facility Status",                          -- BE
     NULL                                                 AS "X",                                        -- BF
-    b.pg_threshold                                       AS "Production Guarantee %",                   -- BG psd
+    TRY_TO_NUMBER(REPLACE(b."% of Contracted Gen Guaranteed", '%', ''), 10, 4) / 100
+                                                         AS "Production Guarantee %",                   -- BG
     b.pegu_payout_frequency                              AS "Pegu Payout Frequency",                    -- BH frozen lookup
     NULL                                                 AS "X",                                        -- BI
     1                                                    AS "0+ Days Past Due (1=Yes, 0=No)",           -- BJ
@@ -300,12 +305,13 @@ SELECT
     ARRAY_TO_STRING(ARRAY_CONSTRUCT_COMPACT(
         IFF(b.ineligible_asset_status = 1, 'Asset Status: ' || b.asset_status, NULL),
         IFF(b.trig_deactivated = 1, 'Deactivated', NULL),
-        IFF(b.trig_120_senior = 1, 'Senior: 120+ DPD, FICO >= 650', NULL),
+        IFF(b.trig_120_senior = 1, 'Senior: 361+ DPD, FICO >= 650', NULL),
         IFF(b.trig_60_senior = 1,
-            IFF(b.fico_num IS NULL, 'Senior: 60+ DPD, no FICO (' || COALESCE(b.fico, 'blank') || ')', 'Senior: 60+ DPD, FICO < 650'), NULL),
+            IFF(b.no_fico, 'Senior: 60+ DPD, no FICO (' || COALESCE(b.fico, 'blank') || ')', 'Senior: 60+ DPD, FICO < 650'), NULL),
         IFF(b.trig_120_holdco = 1, 'Holdco: 120+ DPD', NULL)
     ), '; ')                                             AS "Ineligible Reason",
     b.prior_list_ineligible_status                       AS "Ineligible Asset Status (prior hardcoded list)",
+    b."ABS Aging Bucket"                                 AS "ABS Aging Bucket",
     b."Termporary Removal Check"                         AS "ABS Temporary Removal Check",
     b."Terminated Solar Asset Flag (a.)"                 AS "ABS Terminated Solar Asset Flag (a.)",
     b.escalator_flag                                     AS "ABS Escalator Flag",
