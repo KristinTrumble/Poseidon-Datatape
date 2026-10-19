@@ -6,10 +6,217 @@
 
 WITH params AS (
     SELECT
-        0.005              AS degradation,      -- DG2 annual production degradation
-        '2017-12-31'::date AS ma_pbi_date,      -- DJ2
-        '2020-04-30'::date AS nj_pbi_date,      -- DK2
-        650                AS fico_floor        -- Senior FICO triggers (EB / EC)
+        0.005              AS degradation,          -- DG2 annual production degradation
+        '2017-12-31'::date AS ma_pbi_date,          -- DJ2
+        '2020-04-30'::date AS nj_pbi_date,          -- DK2
+        0.9                AS renewal_pct,          -- DX2 auto renewal % of end-of-contract utility payment
+        25                 AS dpd_min_balance,      -- Aging tab: a past-due bucket counts only at >= $25
+        650                AS fico_floor,           -- Model Inputs Q5: Senior FICO threshold (EB / EC)
+        0                  AS holdco_mode,          -- Model Inputs O3: 1 = Holdco (EA only), otherwise Senior (EB / EC)
+        '2017-07-12'::date AS lease_refund_cutoff,  -- Reference C29: monthly leases signed before this date ...
+        0.13               AS lease_refund_pre_rate -- Reference E29: ... use this lease refund rate
+),
+
+-- Estimated 2022 utility rate by Utility & State ('Utility Rates' tab, column I; 2021 EIA data grown 1%).
+utility_rates (utility_state, rate) AS (
+    SELECT * FROM VALUES
+        ('APSAZ', 0.13586169193117),
+        ('TEPAZ', 0.135356216373141),
+        ('APUCA', 0.171377234642132),
+        ('Banning Electric UtilityCA', 0.221042873667413),
+        ('BurbankCA', 0.160555733917741),
+        ('Colton Electric UtilityCA', 0.151201704004137),
+        ('Glendale Water & PowerCA', 0.219437518447606),
+        ('LADWPCA', 0.214034748200718),
+        ('PasadenaCA', 0.212364654383503),
+        ('PG&ECA', 0.261230915245138),
+        ('Riverside Public UtilitiesCA', 0.174290203397829),
+        ('Roseville ElectricCA', 0.159857427015117),
+        ('UIC EnergyCT', 0.132302280840363),
+        ('Gulf Power - MPHFL', 0.12018295688363),
+        ('NAVFACFL', 0.12018295688363),
+        ('SCEAZ', 0.221042873667413),
+        ('O&RNJ', 0.163687517592585),
+        ('National GridNY', 0.193480603933498),
+        ('NYSE&GNY', 0.193480603933498),
+        ('DelmarvaDE', 0.124436407981273),
+        ('SCECA', 0.215469734400186),
+        ('SDG&ECA', 0.309545647473195),
+        ('Silicon Valley PowerCA', 0.132331578200561),
+        ('SMUDCA', 0.163729801099025),
+        ('Imperial Irrigation DistrictCA', 0.145617182795383),
+        ('Lathrop Irrigation DistrictCA', 0.221042873667413),
+        ('Lodi Electric Utility DepartmentCA', 0.195131917252015),
+        ('Merced Irrigation DistrictCA', 0.185450923154615),
+        ('Modesto Irrigation DistrictCA', 0.182274955085019),
+        ('Moreno Valley Electric UtilityCA', 0.26606796533257),
+        ('Turlock Irrigation DistrictCA', 0.160475185457833),
+        ('XCELCO', 0.125790406175391),
+        ('United PowerCO', 0.134402259337858),
+        ('IREACO', 0.134402259337858),
+        ('Fort Collins UtilitiesCO', 0.119779538191056),
+        ('Colorado Springs UtilitiesCO', 0.134668461317883),
+        ('EversourceCT', 0.2151009507481),
+        ('United IlluminatingCT', 0.254455702982927),
+        ('PepcoDC', 0.123068733006298),
+        ('Duke EnergyFL', 0.138285004286431),
+        ('OUCFL', 0.12727286081487),
+        ('TECO EnergyFL', 0.117485991724127),
+        ('FPLFL', 0.11344337007121),
+        ('Gulf Power CoFL', 0.140421409109453),
+        ('HECOHI', 0.327941415768426),
+        ('HELCOHI', 0.382964549820498),
+        ('MECOHI', 0.354679965042933),
+        ('KIUCHI', 0.366951193058568),
+        ('ComEdIL', 0.136218133172782),
+        ('EversourceMA', 0.2449658639978),
+        ('National GridMA', 0.251724148470031),
+        ('NSTARMA', 0.2449658639978),
+        ('UNITILMA', 0.256833030974938),
+        ('WMECOMA', 0.2449658639978),
+        ('BG&EMD', 0.12417441121115),
+        ('Choptank ElectricMD', 0.139505258868553),
+        ('DelmarvaMD', 0.154649763440727),
+        ('PepcoMD', 0.141235502223474),
+        ('Potomac EdisonMD', 0.110868238521394),
+        ('SMECOMD', 0.122260444629287),
+        ('EversourceNH', 0.197007242773112),
+        ('UNITILNH', 0.190634024263957),
+        ('ACENJ', 0.187753570798334),
+        ('JCP&LNJ', 0.133266061078249),
+        ('PSE&GNJ', 0.175759890553793),
+        ('Rockland ElectricNJ', 0.177899149128729),
+        ('RocklandNJ', 0.177899149128729),
+        ('VinelandNJ', 0.166699718706048),
+        ('PNMNM', 0.146597747163967),
+        ('NV Energy SouthNV', 0.1173529488405),
+        ('NV Energy NorthNV', 0.1173529488405),
+        ('Central HudsonNY', 0.187149541855658),
+        ('ConEdisonNY', 0.275985269921418),
+        ('O&RNY', 0.200474300825432),
+        ('PSEGLINY', 0.222939952106745),
+        ('Met-EdPA', 0.128597104231708),
+        ('PECOPA', 0.127240269425453),
+        ('PenelecPA', 0.146721636140436),
+        ('PPLPA', 0.137256450882042),
+        ('PREPAPR', 0.2768),
+        ('National GridRI', 0.223282027248484),
+        ('Duke EnergySC', 0.112509689207986),
+        ('SCE&GSC', 0.148078862456907),
+        ('Duke Energy ProgressSC', 0.112509689207986),
+        ('Centerpoint EnergyTX', 0.141610885379926),
+        ('OncorTX', 0.147259683115294),
+        ('TNMPTX', 0.122263459411056),
+        ('Rocky Mountain PowerUT', 0.105350121890358),
+        ('Green Mountain PowerVT', 0.197789239058855),
+        ('Burlington Electric DepartmentVT', 0.163989076263655),
+        ('Vermont Electric CooperativeVT', 0.197833572262473),
+        ('Washington Electric Co-OpVT', 0.243402709320444)
+),
+
+-- Assumed utility rate escalator by state (model 'Utility Escalators' tab B6:C20; other states use C24).
+utility_escalators (esc_state, state_escalator) AS (
+    SELECT * FROM VALUES
+        ('AZ', 0.040045478961577),
+        ('CA', 0.043091170333832),
+        ('CO', 0.044856172618651),
+        ('CT', 0.026821569439874),
+        ('FL', 0.035517470313863),
+        ('HI', 0.023879390267745),
+        ('MD', 0.030703413784796),
+        ('MA', 0.025546326423182),
+        ('NV', 0.039424199505464),
+        ('NJ', 0.035118435067595),
+        ('NM', 0.037742340759594),
+        ('NY', 0.028583666050401),
+        ('PA', 0.0356529496219),
+        ('SC', 0.036107832118296),
+        ('TX', 0.024665192894096)
+),
+
+-- Lease refund rate by Monthly/Prepaid, state and utility ('Reference' tab B33:E100).
+lease_refund_rates (lr_product_type, lr_state, lr_utility, refund_rate) AS (
+    SELECT * FROM VALUES
+        ('Monthly', 'AZ', 'APS', 0.11),
+        ('Monthly', 'AZ', 'TEP', 0.07),
+        ('Monthly', 'CA', 'ALAMEDA', 0.13),
+        ('Monthly', 'CA', 'APU', 0.13),
+        ('Monthly', 'CA', 'BANNING ELECTRIC UTILITY', 0.13),
+        ('Monthly', 'CA', 'BURBANK', 0.13),
+        ('Monthly', 'CA', 'COLTON ELECTRIC UTILITY', 0.13),
+        ('Monthly', 'CA', 'GLENDALE WATER & POWER', 0.13),
+        ('Monthly', 'CA', 'LADWP', 0.13),
+        ('Monthly', 'CA', 'LODI ELECTRIC UTILITY DEPARTMENT', 0.13),
+        ('Monthly', 'CA', 'SILICON VALLEY POWER', 0.07),
+        ('Monthly', 'CO', 'United Power', 0.07),
+        ('Monthly', 'CO', 'Fort Collins Utilities', 0.07),
+        ('Monthly', 'CO', 'XCEL', 0.07),
+        ('Monthly', 'CT', 'CL&P', 0.13),
+        ('Monthly', 'CT', 'EVERSOURCE', 0.13),
+        ('Monthly', 'CT', 'UNITED ILLUMINATING', 0.13),
+        ('Monthly', 'HI', 'HECO', 0.13),
+        ('Monthly', 'HI', 'HELCO', 0.13),
+        ('Monthly', 'HI', 'MECO', 0.13),
+        ('Monthly', 'IL', 'ComEd', 0.07),
+        ('Monthly', 'NH', 'EVERSOURCE', 0.13),
+        ('Monthly', 'NH', 'PSCNH', 0.13),
+        ('Monthly', 'NH', 'UNITIL', 0.13),
+        ('Monthly', 'NY', 'CONEDISON', 0.13),
+        ('Monthly', 'NY', 'LIPA', 0.13),
+        ('Monthly', 'NY', 'O&R', 0.13),
+        ('Monthly', 'NY', 'PSEGLI', 0.13),
+        ('Monthly', 'NY', 'CENTRAL HUDSON', 0.11),
+        ('Monthly', 'NY', 'NATIONAL GRID', 0.07),
+        ('Monthly', 'NY', 'NYSE&G', 0.07),
+        ('Monthly', 'SC', 'SCE&G', 0.11),
+        ('Monthly', 'SC', 'DUKE ENERGY', 0.07),
+        ('Monthly', 'SC', 'DUKE ENERGY PROGRESS', 0.07),
+        ('Prepaid', 'AZ', 'APS', 0.05),
+        ('Prepaid', 'AZ', 'TEP', 0.05),
+        ('Prepaid', 'CA', 'LODI ELECTRIC UTILITY DEPARTMENT', 0.1),
+        ('Prepaid', 'CA', 'ALAMEDA', 0.1),
+        ('Prepaid', 'CA', 'APU', 0.1),
+        ('Prepaid', 'CA', 'BURBANK', 0.08),
+        ('Prepaid', 'CA', 'BANNING ELECTRIC UTILITY', 0.08),
+        ('Prepaid', 'CA', 'COLTON ELECTRIC UTILITY', 0.08),
+        ('Prepaid', 'CA', 'GLENDALE WATER & POWER', 0.08),
+        ('Prepaid', 'CA', 'LADWP', 0.08),
+        ('Prepaid', 'CA', 'Merced Irrigation District', 0.08),
+        ('Prepaid', 'CA', 'SILICON VALLEY POWER', 0.05),
+        ('Prepaid', 'CA', 'IMPERIAL IRRIGATION DISTRICT', 0.08),
+        ('Prepaid', 'CO', 'United Power', 0.07),
+        ('Prepaid', 'CO', 'XCEL', 0.08),
+        ('Prepaid', 'CT', 'EVERSOURCE', 0.1),
+        ('Prepaid', 'CT', 'UNITED ILLUMINATING', 0.08),
+        ('Prepaid', 'CT', 'CL&P', 0.08),
+        ('Prepaid', 'HI', 'HECO', 0.13),
+        ('Prepaid', 'HI', 'HELCO', 0.13),
+        ('Prepaid', 'HI', 'MECO', 0.13),
+        ('Prepaid', 'IL', 'ComEd', 0.04),
+        ('Prepaid', 'NH', 'EVERSOURCE', 0.13),
+        ('Prepaid', 'NH', 'PSCNH', 0.08),
+        ('Prepaid', 'NY', 'NYSE&G', 0.1),
+        ('Prepaid', 'NY', 'O&R', 0.1),
+        ('Prepaid', 'NY', 'PSEGLI', 0.1),
+        ('Prepaid', 'NY', 'CONEDISON', 0.1),
+        ('Prepaid', 'NY', 'UNITIL', 0.1),
+        ('Prepaid', 'NY', 'CENTRAL HUDSON', 0.08),
+        ('Prepaid', 'NY', 'LIPA', 0.08),
+        ('Prepaid', 'NY', 'NATIONAL GRID', 0.08),
+        ('Prepaid', 'SC', 'SCE&G', 0.08),
+        ('Prepaid', 'SC', 'DUKE ENERGY', 0.05)
+),
+
+-- Battery adder used when a battery system has no battery payment (model 'Battery Monthly Payment' tab
+-- defaults, by state; other states have none and use 0).
+battery_adder_defaults (bd_state, adder) AS (
+    SELECT * FROM VALUES
+        ('CA', 0.618986159085),
+        ('NJ', 0.341032368692),
+        ('FL', 0.175398228318),
+        ('IL', 0.079788970348),
+        ('PR', 0.065454545455),
+        ('MA', 0.053750813172)
 ),
 
 base AS (
@@ -66,44 +273,65 @@ base AS (
         CASE WHEN psd.billing_type = 'Fixed monthly PPA with annual reset' THEN 'Balanced' ELSE psd.billing_type END AS billing_type_based_on_proposal, -- BZ
         IFF(UPPER(TO_VARCHAR(abs."Ineligible Asset Status")) IN ('1','Y','YES','TRUE'), 1, 0) AS ineligible_asset_status, -- ED
 
-        -- Aging: ABS aging bucket (abs_aging_report."ABS Aging Bucket"), as days past due lower bound.
-        -- No aging-report row = current.
-        CASE ar."ABS Aging Bucket"
-            WHEN 'Less than 30 DPD' THEN 1
-            WHEN '31-60 DPD'        THEN 31
-            WHEN '61-90 DPD'        THEN 61
-            WHEN '91-120 DPD'       THEN 91
-            WHEN '121-180 DPD'      THEN 121
-            WHEN '181-360 DPD'      THEN 181
-            WHEN '361+ DPD'         THEN 361
-            ELSE 0 END AS dpd,
-        IFF(dpd = 1,    1, 0) AS dpd_1_30_flag,
-        IFF(dpd >= 31,  1, 0) AS dpd_30_flag,
-        IFF(dpd >= 61,  1, 0) AS dpd_60_flag,
-        IFF(dpd >= 91,  1, 0) AS dpd_90_flag,
-        IFF(dpd >= 121, 1, 0) AS dpd_120_flag,
+        -- Aging flags (Aging tab): a bucket counts when its balance is >= dpd_min_balance ($25).
+        COALESCE(ar."31-60 Days Past Due",0) + COALESCE(ar."61-90 Days Past Due",0) + COALESCE(ar."91-120 Days Past Due",0)
+          + COALESCE(ar."121-180 Days Past Due",0) + COALESCE(ar."181-360 Days Past Due",0) + COALESCE(ar."361+ Days Past Due",0) AS bal_31,
+        bal_31 - COALESCE(ar."31-60 Days Past Due",0)  AS bal_61,
+        bal_61 - COALESCE(ar."61-90 Days Past Due",0)  AS bal_91,
+        bal_91 - COALESCE(ar."91-120 Days Past Due",0) AS bal_121,
+        IFF(COALESCE(ar."Current Balance",0) <> 0, 1, 0)    AS dpd_0_flag,
+        IFF(COALESCE(ar."1-30 Days Past Due",0) <> 0, 1, 0) AS dpd_1_30_flag,
+        IFF(bal_31  >= v.dpd_min_balance, 1, 0) AS dpd_30_flag,
+        IFF(bal_61  >= v.dpd_min_balance, 1, 0) AS dpd_60_flag,
+        IFF(bal_91  >= v.dpd_min_balance, 1, 0) AS dpd_90_flag,
+        IFF(bal_121 >= v.dpd_min_balance, 1, 0) AS dpd_120_flag,
+        COALESCE(def."Aging Default Flag", 0) AS aging_default_flag,
 
-        -- FICO (BD) = ABS "Adjusted FICO". Category values ('Military Housing', 'New Home', 'Prepaid',
-        -- 'Multifamily') are not missing scores, so only blank / 'Not Available' / other text counts as "No FICO".
+        -- FICO (BD) = ABS "Adjusted FICO". 'Not Available' plays the model's "No Score"; 'Military Housing' its "MPH".
         abs."Adjusted FICO" AS fico,
         TRY_TO_NUMBER(fico) AS fico_num,
-        (fico_num IS NULL AND COALESCE(fico, '') NOT IN ('Military Housing', 'New Home', 'Prepaid', 'Multifamily')) AS no_fico,
+        (fico = 'Not Available') AS no_fico,
 
         -- Contract detail
-        abs."Implied $/kWh Rate" AS implied_rate,                                                     -- CV
-        COALESCE(psd.base_battery_payment, 0) * 12 / NULLIF(abs.est_yr1_gen_contract, 0) AS battery_adder, -- CW
+        -- CV: ABS implied rate; when blank, the model formula (Prepaid 0, Generation = price, else payment x 12 / kWh)
+        COALESCE(abs."Implied $/kWh Rate",
+                 CASE WHEN product_type = 'Prepaid' THEN 0
+                      WHEN billing_type_based_on_proposal = 'Generation' THEN abs."Price per kwh"
+                      ELSE COALESCE(abs.base_lease_payment_amount, abs."Year 1 Monthly Payment") * 12 / NULLIF(abs.est_yr1_gen_contract, 0) END) AS implied_rate,
+        -- CW: battery payment x 12 / year-1 kWh; battery systems without a payment use the state default.
+        CASE WHEN COALESCE(psd.base_battery_payment, 0) * 12 / NULLIF(abs.est_yr1_gen_contract, 0) > 0
+                 THEN psd.base_battery_payment * 12 / abs.est_yr1_gen_contract
+             WHEN COALESCE(abs.battery_count, 0) > 0 THEN COALESCE(bd.adder, 0)
+             ELSE 0 END AS battery_adder,
         implied_rate * abs.est_yr1_gen_contract AS year_1_revenue,                                    -- CY
         CASE WHEN abs.escalator = 0 THEN 0
              WHEN product_type = 'Prepaid' THEN 0
              WHEN ppa_or_lease = 'Lease' OR billing_type_based_on_proposal = 'Balanced'
                   THEN (1 + abs.escalator) / (1 - v.degradation) - 1
              ELSE abs.escalator END AS implied_escalator,                                             -- DG
+        COALESCE(abs."Contract Months Remaining", term_years * 12) / 12 AS contracted_years_remaining,  -- DT (full term if not yet PTO)
+        urt.rate AS utility_rate,                                                                     -- DQ
+        COALESCE(esc.state_escalator, 0.036455143875545) AS utility_escalator,                              -- DS
+        -- DA: lease refund rate (Reference tab logic)
+        CASE WHEN ppa_or_lease = 'PPA' OR abs.state IN ('FL', 'HI', 'PR') THEN 0
+             WHEN abs.state = 'UT'
+                  THEN COALESCE(abs.upfront_including_deposit, 0)
+                       / NULLIF(abs.est_yr1_gen_contract * (1 - POWER(1.005, -term_years)) / 0.005 * 1.005, 0)
+                       + implied_rate
+             WHEN abs.te_fund = 'Kina 2019' THEN implied_rate
+             WHEN psd.sr_signoff IS NOT NULL AND psd.sr_signoff::date < v.lease_refund_cutoff THEN v.lease_refund_pre_rate
+             ELSE COALESCE(NULLIF(lr.refund_rate, 0), implied_rate) END AS lease_refund_rate,
 
-        -- Eligibility triggers (1 = trigger hit), from the ABS aging bucket.
-        dpd_120_flag AS trig_120_holdco,                                                              -- EA: 121+ DPD
-        IFF(dpd = 361 AND fico_num >= v.fico_floor, 1, 0) AS trig_120_senior,                         -- EB: 361+ bucket, FICO >= 650
-        IFF(dpd_60_flag = 1 AND (no_fico OR fico_num < v.fico_floor), 1, 0) AS trig_60_senior,        -- EC: 61+ DPD, no FICO or < 650
-        IFF(UPPER(TO_VARCHAR(def."Deactivation Default Flag")) IN ('1','Y','YES','TRUE'), 1, 0) AS trig_deactivated -- EE
+        -- Eligibility triggers (1 = trigger hit), following the model. Each asset is counted under its first
+        -- trigger only: ED only when EB/EC are 0, EE only when EB:ED are 0.
+        IFF(v.holdco_mode = 1, dpd_120_flag, 0) AS trig_120_holdco,                                   -- EA
+        IFF(v.holdco_mode = 1, 0,
+            IFF(aging_default_flag = 1 AND (fico_num >= v.fico_floor OR fico = 'Military Housing'), 1, 0)) AS trig_120_senior, -- EB
+        IFF(v.holdco_mode = 1, 0,
+            IFF(dpd_60_flag = 1 AND (fico_num < v.fico_floor OR no_fico), 1, 0)) AS trig_60_senior,   -- EC
+        IFF(trig_120_senior + trig_60_senior > 0, 0, ineligible_asset_status) AS trig_ineligible_status, -- ED
+        IFF(trig_120_senior + trig_60_senior + trig_ineligible_status > 0, 0,
+            IFF(UPPER(TO_VARCHAR(def."Deactivation Default Flag")) IN ('1','Y','YES','TRUE'), 1, 0)) AS trig_deactivated -- EE
 
     -- PSD drives the row set so every Poseidon agreement appears even if the ABS tape is missing it
     -- (see "No ABS Record" diagnostic).
@@ -126,6 +354,18 @@ base AS (
         ON psd.agreement_number = pegu.agreement_number
 
     CROSS JOIN params v
+
+    LEFT JOIN utility_rates AS urt
+        ON urt.utility_state = abs.utility_clean || abs.state
+
+    LEFT JOIN utility_escalators AS esc
+        ON esc.esc_state = abs.state
+
+    LEFT JOIN lease_refund_rates AS lr
+        ON lr.lr_product_type = abs."Product Type" AND lr.lr_state = abs.state AND UPPER(lr.lr_utility) = UPPER(abs.utility_clean)
+
+    LEFT JOIN battery_adder_defaults AS bd
+        ON bd.bd_state = abs.state
 
     WHERE psd.TE_FUND IN (
         'Balerion II 2021',
@@ -203,7 +443,7 @@ SELECT
                                                          AS "Production Guarantee %",                   -- BG
     b.pegu_payout_frequency                              AS "Pegu Payout Frequency",                    -- BH frozen lookup
     NULL                                                 AS "X",                                        -- BI
-    1                                                    AS "0+ Days Past Due (1=Yes, 0=No)",           -- BJ
+    b.dpd_0_flag                                         AS "0+ Days Past Due (1=Yes, 0=No)",           -- BJ
     b.dpd_1_30_flag                                      AS "1-30 Days Past Due (1=Yes, 0=No)",         -- BK
     b.dpd_30_flag                                        AS "30+ Days Past Due (1=Yes, 0=No)",          -- BL
     b.dpd_60_flag                                        AS "60+ Days Past Due (1=Yes, 0=No)",          -- BM
@@ -245,7 +485,7 @@ SELECT
     b."Expected PTO Date"                                AS "Actual & Estimated PTO Date",              -- CM
     YEAR(b."Expected PTO Date")                          AS "PTO Year",                                 -- CN
     b."Months Since PTO at EOQ"                          AS "Months Since PTO",                         -- CO
-    b."Contract Months Remaining"                        AS "Remaining Time Contracted (Months)",       -- CP
+    b.contracted_years_remaining * 12                    AS "Remaining Time Contracted (Months)",       -- CP
     b."First Payment Date"                               AS "First Payment Date (Expected if No PTO)",  -- CQ
     b."Last Payment Date"                                AS "Last Payment Date (Expected if No PTO)",   -- CR
     IFF(b.pto_date IS NULL, 'No PTO', 'PTO')             AS "Actually Achieve PTO Yet?",                -- CS
@@ -259,14 +499,15 @@ SELECT
          WHEN b."Contract Type" = 'Generation'
               THEN b.year_1_revenue * (((b.implied_rate * (1 + b.escalator) * b.est_yr1_gen_contract * (1 - b.degradation)) / NULLIF(b.year_1_revenue, 0)) - 1)
          ELSE b.year_1_revenue * b.escalator END         AS "Year 1 Escalator ($)",                     -- CZ
-    NULL                                                 AS "Lease Refund Rate",                        -- DA (input)
+    b.lease_refund_rate                                  AS "Lease Refund Rate",                        -- DA
     IFF(b.ppa_or_lease = 'PPA',
         -- (Upfront + Deposit) / -PV(0.5%, years, gen, 0, 1) + implied rate
         COALESCE(b.upfront_including_deposit, 0)
           / NULLIF(b.est_yr1_gen_contract * (1 - POWER(1.005, -b.term_years)) / 0.005 * 1.005, 0)
           + b.implied_rate,
         0)                                               AS "PPA Refund Rate",                          -- DB
-    "PPA Refund Rate" * b.est_yr1_gen_contract           AS "Year 1 Refund Rate * kWh Production",      -- DC (DA blank)
+    (b.lease_refund_rate + "PPA Refund Rate") * b.est_yr1_gen_contract
+                                                         AS "Year 1 Refund Rate * kWh Production",      -- DC
     b.year_1_revenue * b.escalator                       AS "Year 1 Revenue * Escalator",               -- DD
     b.est_yr1_gen_contract * b.pbi_level                 AS "Est 1st Year Production * PBI $ / kWh",    -- DE
     b.term_years * b.system_size                         AS "Contract Years * kW",                      -- DF
@@ -285,20 +526,24 @@ SELECT
                                                          AS "Implied End of Contracted Period Production (Contract)", -- DO
     "Implied End of Contracted Period Production (Contract)" * "End of Contracted Rate"
                                                          AS "End of Contract Payments",                 -- DP
-    NULL                                                 AS "Estimated 2022 Utility Rate ($/kWh)",      -- DQ (input)
-    NULL                                                 AS "2022 Utility Rate * 2022 Contracted Production", -- DR (needs DQ)
-    NULL                                                 AS "Assumed Utility Rate Escalator",           -- DS (input)
-    b."Contract Months Remaining" / 12                   AS "Contracted Years Remaining",               -- DT
-    NULL                                                 AS "Implied End of Contract Utility Rate",     -- DU (needs DQ, DS)
-    NULL                                                 AS "Implied End of Contract Utility Payment",  -- DV (needs DU)
-    NULL                                                 AS "PA Consulting Escalator * Contracted Years Remaining", -- DW (needs DS)
-    NULL                                                 AS "Auto Renewal Annual Payment",              -- DX (needs DU)
+    b.utility_rate                                       AS "Estimated 2022 Utility Rate ($/kWh)",      -- DQ
+    b.utility_rate * b.est_yr1_gen_contract * POWER(1 - b.degradation, b.term_years - b.contracted_years_remaining)
+                                                         AS "2022 Utility Rate * 2022 Contracted Production", -- DR
+    b.utility_escalator                                  AS "Assumed Utility Rate Escalator",           -- DS
+    b.contracted_years_remaining                         AS "Contracted Years Remaining",               -- DT
+    b.utility_rate * POWER(1 + b.utility_escalator, b.contracted_years_remaining)
+                                                         AS "Implied End of Contract Utility Rate",     -- DU
+    "Implied End of Contract Utility Rate" * b.est_yr1_gen_contract * POWER(1 - b.degradation, b.term_years)
+                                                         AS "Implied End of Contract Utility Payment",  -- DV
+    b.contracted_years_remaining * b.utility_escalator   AS "PA Consulting Escalator * Contracted Years Remaining", -- DW
+    "Implied End of Contract Utility Rate" * b.renewal_pct * "Implied End of Contracted Period Production (Contract)"
+                                                         AS "Auto Renewal Annual Payment",              -- DX
     NULL                                                 AS "x",                                        -- DY
     NULL                                                 AS "Prior Quarter PMT Date Eligible Projects (1=Eligible, 0=Ineligible)", -- DZ (team populates)
     b.trig_120_holdco                                    AS "120+ dpd (Holdco only)",                   -- EA
     b.trig_120_senior                                    AS "120+ dpd (361+ not resolved) and FICO =>650 (Senior only)", -- EB
     b.trig_60_senior                                     AS "60+ dpd and No FICO or FICO <650 (Senior only)", -- EC
-    b.ineligible_asset_status                            AS "Ineligible Asset Status",                  -- ED
+    b.trig_ineligible_status                             AS "Ineligible Asset Status",                  -- ED
     b.trig_deactivated                                   AS "Deactivated",                              -- EE
     NULL                                                 AS "Current Quarter PMT Date Eligible Projects (1=Eligible, 0=Ineligible)", -- EF (team calculates: depends on prior eligibility in DZ)
 
@@ -318,14 +563,15 @@ SELECT
 
     -- Diagnostics
     ARRAY_TO_STRING(ARRAY_CONSTRUCT_COMPACT(
-        IFF(b.ineligible_asset_status = 1, 'Asset Status: ' || b.asset_status, NULL),
-        IFF(b.trig_deactivated = 1, 'Deactivated', NULL),
-        IFF(b.trig_120_senior = 1, 'Senior: 361+ DPD, FICO >= 650', NULL),
+        IFF(b.trig_120_senior = 1, 'Senior: Aging Default, FICO >= 650 or Military Housing', NULL),
         IFF(b.trig_60_senior = 1,
             IFF(b.no_fico, 'Senior: 60+ DPD, no FICO (' || COALESCE(b.fico, 'blank') || ')', 'Senior: 60+ DPD, FICO < 650'), NULL),
+        IFF(b.trig_ineligible_status = 1, 'Asset Status: ' || b.asset_status, NULL),
+        IFF(b.trig_deactivated = 1, 'Deactivated', NULL),
         IFF(b.trig_120_holdco = 1, 'Holdco: 120+ DPD', NULL)
     ), '; ')                                             AS "Ineligible Reason",
     b.prior_list_ineligible_status                       AS "Ineligible Asset Status (prior hardcoded list)",
+    b.ineligible_asset_status                            AS "Ineligible Asset Status (ABS flag, before waterfall)",
     b."Termporary Removal Check"                         AS "ABS Temporary Removal Check",
     b."Terminated Solar Asset Flag (a.)"                 AS "ABS Terminated Solar Asset Flag (a.)",
     b.escalator_flag                                     AS "ABS Escalator Flag",
