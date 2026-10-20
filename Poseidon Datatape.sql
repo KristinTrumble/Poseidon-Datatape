@@ -289,6 +289,7 @@ base AS (
         IFF(bal_61  >= v.dpd_min_balance, 1, 0) AS dpd_60_flag,
         IFF(bal_91  >= v.dpd_min_balance, 1, 0) AS dpd_90_flag,
         IFF(bal_121 >= v.dpd_min_balance, 1, 0) AS dpd_120_flag,
+        IFF(COALESCE(ar."361+ Days Past Due", 0) >= v.dpd_min_balance, 1, 0) AS dpd_361_flag,
         COALESCE(def."Aging Default Flag", 0) AS aging_default_flag,
 
         -- FICO (BD) = ABS "Adjusted FICO". 'Not Available' plays the model's "No Score"; 'Military Housing' its "MPH".
@@ -330,7 +331,7 @@ base AS (
         -- trigger only: ED only when EB/EC are 0, EE only when EB:ED are 0.
         IFF(v.holdco_mode = 1, dpd_120_flag, 0) AS trig_120_holdco,                                   -- EA
         IFF(v.holdco_mode = 1, 0,
-            IFF(aging_default_flag = 1 AND (fico_num >= v.fico_floor OR fico = 'Military Housing'), 1, 0)) AS trig_120_senior, -- EB
+            IFF(dpd_361_flag = 1 AND (fico_num >= v.fico_floor OR fico = 'Military Housing'), 1, 0)) AS trig_120_senior, -- EB: 361+ >= $25
         IFF(v.holdco_mode = 1, 0,
             IFF(dpd_60_flag = 1 AND (fico_num < v.fico_floor OR no_fico), 1, 0)) AS trig_60_senior,   -- EC
         IFF(trig_120_senior + trig_60_senior > 0, 0, ineligible_asset_status) AS trig_ineligible_status, -- ED
@@ -570,7 +571,7 @@ SELECT
 
     -- Diagnostics
     ARRAY_TO_STRING(ARRAY_CONSTRUCT_COMPACT(
-        IFF(b.trig_120_senior = 1, 'Senior: Aging Default, FICO >= 650 or Military Housing', NULL),
+        IFF(b.trig_120_senior = 1, 'Senior: 361+ DPD >= $25, FICO >= 650 or Military Housing', NULL),
         IFF(b.trig_60_senior = 1,
             IFF(b.no_fico, 'Senior: 60+ DPD, no FICO (' || COALESCE(b.fico, 'blank') || ')', 'Senior: 60+ DPD, FICO < 650'), NULL),
         IFF(b.trig_ineligible_status = 1, 'Asset Status: ' || b.asset_status, NULL),
