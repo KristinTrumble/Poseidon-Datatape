@@ -270,7 +270,8 @@ base AS (
 
         abs.agreement_term_years AS term_years,                                                       -- CD
         abs."Product Type" AS product_type,                                                           -- BY (Monthly / Prepaid)
-        abs."Product" AS ppa_or_lease,                                                                -- BX (PPA / Lease)
+        -- BX: ABS "Product"; when blank, from the PSD billing type (Lease -> Lease, otherwise PPA)
+        COALESCE(NULLIF(abs."Product", ''), IFF(psd.billing_type = 'Lease', 'Lease', 'PPA')) AS ppa_or_lease,
         CASE WHEN psd.billing_type = 'Fixed monthly PPA with annual reset' THEN 'Balanced' ELSE psd.billing_type END AS billing_type_based_on_proposal, -- BZ
         IFF(UPPER(TO_VARCHAR(abs."Ineligible Asset Status")) IN ('1','Y','YES','TRUE'), 1, 0) AS ineligible_asset_status, -- ED
 
