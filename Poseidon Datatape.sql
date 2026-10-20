@@ -228,11 +228,8 @@ base AS (
         abs.asset_status, abs."Year 1 Monthly Payment", abs.install_partner, abs.transfer_price,
         abs.panel_vendor_clean, abs.inverter_vendor_clean, abs.battery_vendor_clean, abs.battery_model_clean,
         abs.battery_count, abs."String or Micro", abs.fico_latest_service_transfer_score,
-        -- Contract Type (Balanced / Generation / Upfront); when ABS "Product" is blank the ABS contract fields are
-        -- incomplete, so take Balanced vs Generation from the PSD billing type instead.
-        IFF(NULLIF(abs."Product", '') IS NULL,
-            IFF(psd.billing_type = 'Generation', 'Generation', 'Balanced'),
-            abs."Contract Type") AS "Contract Type",
+        -- Balanced vs Generation (CA, CB, CZ) comes from the PSD billing type, as in the model (BZ).
+        IFF(psd.billing_type = 'Generation', 'Generation', 'Balanced') AS "Contract Type",
         abs."ACH (Y/N)", abs."Sunrun Originated Asset", abs."Multifamily Project?", abs."Expected PTO Date",
         abs."Months Since PTO at EOQ", abs."Contract Months Remaining", abs."First Payment Date",
         abs."Last Payment Date", abs."Termporary Removal Check", abs."Terminated Solar Asset Flag (a.)",
