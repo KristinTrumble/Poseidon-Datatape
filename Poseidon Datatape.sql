@@ -227,7 +227,12 @@ base AS (
         abs."Price per kwh", abs.base_lease_payment_amount, abs.escalator, abs.upfront_including_deposit,
         abs.asset_status, abs."Year 1 Monthly Payment", abs.install_partner, abs.transfer_price,
         abs.panel_vendor_clean, abs.inverter_vendor_clean, abs.battery_vendor_clean, abs.battery_model_clean,
-        abs.battery_count, abs."String or Micro", abs.fico_latest_service_transfer_score, abs."Contract Type",
+        abs.battery_count, abs."String or Micro", abs.fico_latest_service_transfer_score,
+        -- Contract Type (Balanced / Generation / Upfront); when ABS "Product" is blank the ABS contract fields are
+        -- incomplete, so take Balanced vs Generation from the PSD billing type instead.
+        IFF(NULLIF(abs."Product", '') IS NULL,
+            IFF(psd.billing_type = 'Generation', 'Generation', 'Balanced'),
+            abs."Contract Type") AS "Contract Type",
         abs."ACH (Y/N)", abs."Sunrun Originated Asset", abs."Multifamily Project?", abs."Expected PTO Date",
         abs."Months Since PTO at EOQ", abs."Contract Months Remaining", abs."First Payment Date",
         abs."Last Payment Date", abs."Termporary Removal Check", abs."Terminated Solar Asset Flag (a.)",
